@@ -112,16 +112,53 @@ body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;backgrou
     <!-- Certificado -->
     <div class="card">
       <div class="card-title">Certificado Digital</div>
-      <div style="background:#e8f8f0;border-radius:10px;padding:12px 14px;
-                  display:flex;align-items:center;gap:12px;margin-bottom:14px;">
-        <span style="font-size:26px;">🔐</span>
-        <div>
-          <div style="font-weight:600;font-size:14px;">NelsonBastos.pfx</div>
-          <div style="font-size:11px;color:#27ae60;margin-top:2px;">
-            ✅ Certificado incorporado · válido até 2031
+
+      <!-- Estado: sem certificado -->
+      <div id="certNone" style="display:none;">
+        <div style="background:#fff3cd;border-radius:10px;padding:12px 14px;
+                    margin-bottom:12px;font-size:13px;color:#856404;">
+          ⚠️ Certificado não encontrado. Seleccione o ficheiro .pfx uma vez
+          — ficará guardado neste dispositivo.
+        </div>
+        <label style="display:block;position:relative;">
+          <div class="inp" style="cursor:pointer;color:#888;
+                                  display:flex;align-items:center;gap:8px;">
+            📎 Seleccionar NelsonBastos.pfx
           </div>
+          <input type="file" accept=".pfx,.p12"
+                 style="position:absolute;inset:0;opacity:0;cursor:pointer;"
+                 onchange="savePfxLocally(this)">
+        </label>
+      </div>
+
+      <!-- Estado: certificado guardado -->
+      <div id="certReady" style="display:none;">
+        <div style="background:#e8f8f0;border-radius:10px;padding:12px 14px;
+                    display:flex;align-items:center;gap:12px;margin-bottom:12px;">
+          <span style="font-size:26px;">🔐</span>
+          <div style="flex:1;">
+            <div style="font-weight:600;font-size:14px;" id="certName">NelsonBastos.pfx</div>
+            <div style="font-size:11px;color:#27ae60;margin-top:2px;">
+              ✅ Guardado neste dispositivo
+            </div>
+          </div>
+          <button onclick="removePfx()"
+                  style="background:none;border:1px solid #ddd;border-radius:8px;
+                         padding:5px 10px;font-size:12px;color:#888;cursor:pointer;">
+            Limpar
+          </button>
         </div>
       </div>
+
+      <!-- A carregar -->
+      <div id="certLoading">
+        <div style="background:#f0e8fa;border-radius:10px;padding:12px 14px;
+                    display:flex;align-items:center;gap:10px;margin-bottom:12px;">
+          <span style="font-size:22px;">⏳</span>
+          <div style="font-size:13px;color:#5a2882;">A verificar certificado…</div>
+        </div>
+      </div>
+
       <div class="lbl">Password do certificado</div>
       <input type="password" class="inp" id="pfxPass" placeholder="••••••••"
              autocomplete="current-password">
@@ -196,16 +233,88 @@ let totalPages = 1;
 let pdfScale   = 1;
 let placement  = null;
 
-// ── Embedded PFX (carregado automaticamente) ─────────────────────────────
-const EMBEDDED_PFX_B64 = "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";
+// ── PFX guardado em IndexedDB (local, nunca vai para servidor) ────────────
+const DB_NAME = "docsign_db", DB_STORE = "certs", DB_KEY = "pfx";
 
-function loadSavedCert() {
+function openDB() {
+  return new Promise((res, rej) => {
+    const req = indexedDB.open(DB_NAME, 1);
+    req.onupgradeneeded = e => e.target.result.createObjectStore(DB_STORE);
+    req.onsuccess = e => res(e.target.result);
+    req.onerror   = e => rej(e.target.error);
+  });
+}
+
+async function savePfxToDB(name, buffer) {
+  const db = await openDB();
+  return new Promise((res, rej) => {
+    const tx = db.transaction(DB_STORE, "readwrite");
+    tx.objectStore(DB_STORE).put({ name, buffer }, DB_KEY);
+    tx.oncomplete = res; tx.onerror = e => rej(e.target.error);
+  });
+}
+
+async function loadPfxFromDB() {
+  const db = await openDB();
+  return new Promise((res, rej) => {
+    const tx  = db.transaction(DB_STORE, "readonly");
+    const req = tx.objectStore(DB_STORE).get(DB_KEY);
+    req.onsuccess = e => res(e.target.result || null);
+    req.onerror   = e => rej(e.target.error);
+  });
+}
+
+async function deletePfxFromDB() {
+  const db = await openDB();
+  return new Promise((res, rej) => {
+    const tx = db.transaction(DB_STORE, "readwrite");
+    tx.objectStore(DB_STORE).delete(DB_KEY);
+    tx.oncomplete = res; tx.onerror = e => rej(e.target.error);
+  });
+}
+
+async function loadSavedCert() {
+  document.getElementById("certLoading").style.display = "block";
+  document.getElementById("certNone").style.display    = "none";
+  document.getElementById("certReady").style.display   = "none";
   try {
-    const bin = atob(EMBEDDED_PFX_B64);
-    const arr = new Uint8Array(bin.length);
-    for (let i = 0; i < bin.length; i++) arr[i] = bin.charCodeAt(i);
-    pfxBuffer = arr.buffer;
-  } catch(e) { console.warn("Cert load failed:", e); }
+    const saved = await loadPfxFromDB();
+    if (saved && saved.buffer) {
+      pfxBuffer = saved.buffer;
+      document.getElementById("certName").textContent = saved.name || "NelsonBastos.pfx";
+      document.getElementById("certReady").style.display   = "block";
+      document.getElementById("certLoading").style.display = "none";
+    } else {
+      document.getElementById("certNone").style.display    = "block";
+      document.getElementById("certLoading").style.display = "none";
+    }
+  } catch(e) {
+    console.warn("DB error:", e);
+    document.getElementById("certNone").style.display    = "block";
+    document.getElementById("certLoading").style.display = "none";
+  }
+}
+
+async function savePfxLocally(input) {
+  const file = input.files[0];
+  if (!file) return;
+  const buffer = await file.arrayBuffer();
+  pfxBuffer = buffer;
+  await savePfxToDB(file.name, buffer);
+  document.getElementById("certName").textContent = file.name;
+  document.getElementById("certNone").style.display    = "none";
+  document.getElementById("certReady").style.display   = "block";
+  document.getElementById("certLoading").style.display = "none";
+  toast("🔐 Certificado guardado permanentemente!", "ok");
+}
+
+async function removePfx() {
+  await deletePfxFromDB();
+  pfxBuffer = null;
+  document.getElementById("certReady").style.display   = "none";
+  document.getElementById("certNone").style.display    = "block";
+  document.getElementById("certLoading").style.display = "none";
+  toast("Certificado removido");
 }
 
 // ── Files ────────────────────────────────────────────────────────────────
