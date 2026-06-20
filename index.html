@@ -252,7 +252,7 @@ body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;backgrou
   <div class="preview-footer">
     <button class="pfooter-btn" onclick="downloadSigned()"
             style="background:var(--p);color:#fff;">
-      📤 Guardar / Partilhar
+      📥 Guardar em Downloads
     </button>
     <button class="pfooter-btn" onclick="goHome()"
             style="background:var(--lav);color:var(--pd);">
@@ -519,16 +519,18 @@ function resetPlacement() {
 
 // ── Preview & Download ────────────────────────────────────────────────────
 let _signedBlob = null;
+let _pdfBlob    = null;
 let _signedName = null;
 
-async function showPreview(blob, outName) {
-  _signedBlob = blob;
+async function showPreview(pdfBlob, dlBlob, outName) {
+  _signedBlob = dlBlob;   // octet-stream for download
+  _pdfBlob    = pdfBlob;  // pdf for preview render
   _signedName = outName;
   document.getElementById("previewTitle").textContent = outName;
 
   // Render first page of signed PDF to canvas for preview
   try {
-    const arr    = await blob.arrayBuffer();
+    const arr    = await pdfBlob.arrayBuffer();
     const pdfjsDoc = await pdfjsLib.getDocument({ data: arr }).promise;
     const page   = await pdfjsDoc.getPage(1);
     const wrap   = document.getElementById("previewWrap");
@@ -546,43 +548,25 @@ async function showPreview(blob, outName) {
 
 function downloadSigned() {
   if (!_signedBlob || !_signedName) return;
-
-  // Method 1: Share API (most reliable on Android — saves to any app)
-  if (navigator.share && navigator.canShare) {
-    const file = new File([_signedBlob], _signedName, { type: "application/pdf" });
-    if (navigator.canShare({ files: [file] })) {
-      navigator.share({
-        files: [file],
-        title: _signedName,
-        text: "DocSign — Tecnovia Angola"
-      }).then(() => toast("✅ Partilhado!", "ok"))
-        .catch(e => { if (e.name !== "AbortError") fallbackDownload(); });
-      return;
-    }
-  }
-  fallbackDownload();
-}
-
-function fallbackDownload() {
-  if (!_signedBlob || !_signedName) return;
-  // Convert to base64 data URL — forces download on Android browsers
-  const reader = new FileReader();
-  reader.onloadend = () => {
-    const a       = document.createElement("a");
-    a.href        = reader.result;
-    a.download    = _signedName;
-    a.type        = "application/octet-stream";
-    a.style.display = "none";
-    document.body.appendChild(a);
-    a.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true, view: window }));
-    setTimeout(() => document.body.removeChild(a), 2000);
-    toast("📥 " + _signedName, "ok");
-  };
-  reader.readAsDataURL(_signedBlob);
+  // octet-stream blob forces download instead of opening PDF viewer
+  const url = URL.createObjectURL(_signedBlob);
+  const a   = document.createElement("a");
+  a.href        = url;
+  a.download    = _signedName;
+  a.rel         = "noopener";
+  a.style.display = "none";
+  document.body.appendChild(a);
+  a.click();
+  setTimeout(() => {
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  }, 3000);
+  toast("📥 A guardar " + _signedName + " em Downloads", "ok");
 }
 
 function goHome() {
   _signedBlob = null;
+  _pdfBlob    = null;
   _signedName = null;
   goBack();
 }
@@ -648,11 +632,13 @@ async function signCurrent() {
     const signed  = await doc.save();
     const outName = name.replace(/\.pdf$/i,"") + "_mobile_signed_NB.pdf";
     // Share as PDF on Android
-    const blob = new Blob([signed], { type: "application/pdf" });
+    // Use octet-stream to force download instead of opening PDF viewer
+    const pdfBlob  = new Blob([signed], { type: "application/pdf" });
+    const dlBlob   = new Blob([signed], { type: "application/octet-stream" });
     setBadge(name, "done", "✅ Assinado");
     fileMap.delete(name);
     // Show preview screen
-    await showPreview(blob, outName);
+    await showPreview(pdfBlob, dlBlob, outName);
   } catch(err) {
     console.error(err);
     toast("❌ " + (err.message||err), "err");
