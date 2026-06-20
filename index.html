@@ -444,7 +444,7 @@ function placeAt(e) {
   const rect = canvas.getBoundingClientRect();
   const cx = (e.clientX || e.pageX) - rect.left;
   const cy = (e.clientY || e.pageY) - rect.top;
-  const sw = 130, sh = 50;
+  const sw = 78, sh = 30;
   const sx = Math.max(0, Math.min(cx - sw/2, canvas.width  - sw));
   const sy = Math.max(0, Math.min(cy - sh/2, canvas.height - sh));
   showOverlay(sx, sy, sw, sh);
@@ -642,41 +642,51 @@ async function signCurrent() {
     const sigBytes = Uint8Array.from(atob(SIG_B64), c => c.charCodeAt(0));
     const sigImg   = await doc.embedPng(sigBytes);
 
-    // Text lines — decide based on available height
+    // Build text lines based on field height
     const font  = await doc.embedFont(StandardFonts.Helvetica);
     const now   = new Date();
     const dStr  = now.toISOString().slice(0,10).replace(/-/g,".");
     const tStr  = now.toTimeString().slice(0,8);
     const tz    = now.toTimeString().match(/GMT([+-]\d{4})/)?.[1]||"+0000";
     const tzF   = tz.slice(0,3)+"'"+tz.slice(3)+"'";
-    const lines = pdfH < 35
-      ? ["Nelson Bastos", dStr+" "+tStr, "Motivo: "+reason]
+    const lines = pdfH < 25
+      ? ["Nelson Bastos", dStr, "Motivo: "+reason]
+      : pdfH < 40
+      ? ["Nelson Bastos", dStr+" "+tStr, "Motivo: "+reason, "Disp. Movel"]
       : ["Assinado de forma","digital por Nelson","Bastos",
          "Dados: "+dStr, tStr+" "+tzF, "Motivo: "+reason, "Disp. Movel"];
 
-    // Calculate text font size first
-    const txtW0   = pdfW * 0.52;  // text takes 52% of width
+    // Font size fitted to text area height AND width
+    // Image = 45% width, text = 53% width
+    const IMG_PCT = 0.45;
+    const TXT_PCT = 0.53;
+    const txtW0   = pdfW * TXT_PCT;
     const maxLen  = Math.max(...lines.map(l => l.length));
     const fsByW   = txtW0 / maxLen * 1.55;
-    const fsByH   = (pdfH - 2) / lines.length / 1.25;
-    const fs      = Math.max(3.0, Math.min(fsByW, fsByH, 7.0));
-    const lh      = fs * 1.2;
+    const fsByH   = (pdfH - 1) / lines.length / 1.15;
+    const fs      = Math.max(2.5, Math.min(fsByW, fsByH, 8.0));
+    const lh      = fs * 1.15;
 
-    // Image takes remaining left side
-    const imgMaxW = pdfW * 0.46;
-    const imgMaxH = pdfH * 0.92;
-    let drawW = imgMaxW;
-    let drawH = drawW / (sigImg.width / sigImg.height);
-    if (drawH > imgMaxH) { drawH = imgMaxH; drawW = drawH * (sigImg.width / sigImg.height); }
+    // Image fitted to left side, same height as text block
+    const textBlockH = lines.length * lh;
+    const imgTargetH = Math.min(textBlockH, pdfH * 0.95);
+    const imgTargetW = imgTargetH * (sigImg.width / sigImg.height);
+    // Don't exceed 45% width
+    let drawH = imgTargetH;
+    let drawW = imgTargetW;
+    if (drawW > pdfW * IMG_PCT) {
+      drawW = pdfW * IMG_PCT;
+      drawH = drawW / (sigImg.width / sigImg.height);
+    }
     const imgX = pdfX;
     const imgY = pdfY + (pdfH - drawH) / 2;
     page.drawImage(sigImg, { x: imgX, y: imgY, width: drawW, height: drawH });
 
-    // Draw text right of image
-    const txtX    = pdfX + imgMaxW + 2;
-    const txtW    = pdfW - imgMaxW - 4;
+    // Text aligned to image vertical centre
+    const txtX    = pdfX + pdfW * IMG_PCT + 2;
+    const txtW    = pdfW * TXT_PCT - 2;
     const totalTH = lines.length * lh;
-    let   ty      = pdfY + (pdfH + totalTH) / 2 - fs * 0.3;
+    let   ty      = pdfY + (pdfH + totalTH) / 2 - fs * 0.2;
     for (const l of lines) {
       page.drawText(l, { x: txtX, y: ty, size: fs, font, color: rgb(0,0,0) });
       ty -= lh;
