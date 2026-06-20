@@ -168,6 +168,37 @@ body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;backgrou
       </div>
     </div>
 
+    <!-- Pasta de destino -->
+    <div class="card">
+      <div class="card-title">Pasta de Destino</div>
+      <div id="folderNone" style="display:none;">
+        <div style="background:#fff3cd;border-radius:10px;padding:10px 14px;
+                    font-size:13px;color:#856404;margin-bottom:10px;">
+          📁 Nenhuma pasta seleccionada — PDFs vão para Downloads
+        </div>
+      </div>
+      <div id="folderReady" style="display:none;background:#e8f8f0;border-radius:10px;
+           padding:12px 14px;display:flex;align-items:center;gap:10px;margin-bottom:10px;">
+        <span style="font-size:22px;">📂</span>
+        <div style="flex:1;">
+          <div style="font-weight:600;font-size:14px;" id="folderName">Downloads</div>
+          <div style="font-size:11px;color:#27ae60;">✅ Pasta guardada</div>
+        </div>
+        <button onclick="clearFolder()"
+                style="background:none;border:1px solid #ddd;border-radius:8px;
+                       padding:5px 10px;font-size:12px;color:#888;cursor:pointer;">
+          Mudar
+        </button>
+      </div>
+      <button onclick="pickFolder()"
+              style="width:100%;padding:12px;background:#f0e8fa;border:none;
+                     border-radius:12px;color:#5a2882;font-size:14px;
+                     font-weight:600;cursor:pointer;display:flex;
+                     align-items:center;justify-content:center;gap:8px;">
+        📁 Escolher pasta de destino
+      </button>
+    </div>
+
     <!-- Assinatura visual -->
     <div class="card">
       <div class="card-title">Assinatura Visual</div>
@@ -453,6 +484,87 @@ function resetPlacement() {
   document.getElementById("hintBar").textContent="👆 Toque no documento para colocar a assinatura";
 }
 
+// ── Save PDF ─────────────────────────────────────────────────────────────
+async function savePdf(blob, file, outName) {
+  // 1. Try File System Access API (choose folder — Chrome/Samsung Browser)
+  const savedFolder = await getSavedFolder();
+  if (savedFolder) {
+    try {
+      const fileHandle = await savedFolder.getFileHandle(outName, { create: true });
+      const writable   = await fileHandle.createWritable();
+      await writable.write(blob);
+      await writable.close();
+      toast("✅ Guardado em " + outName, "ok");
+      return;
+    } catch(e) {
+      console.warn("Folder write failed:", e);
+    }
+  }
+
+  // 2. Try to pick folder and save
+  if (window.showDirectoryPicker) {
+    try {
+      const dirHandle  = await window.showDirectoryPicker({ mode: "readwrite" });
+      // Save folder handle for next time
+      await saveFolderHandle(dirHandle);
+      const fileHandle = await dirHandle.getFileHandle(outName, { create: true });
+      const writable   = await fileHandle.createWritable();
+      await writable.write(blob);
+      await writable.close();
+      toast("✅ Guardado em " + outName, "ok");
+      return;
+    } catch(e) {
+      if (e.name !== "AbortError") console.warn("Directory picker failed:", e);
+    }
+  }
+
+  // 3. Android share sheet (opens with PDF viewer / save to Downloads)
+  if (navigator.share && navigator.canShare && navigator.canShare({ files: [file] })) {
+    try {
+      await navigator.share({ files: [file], title: outName });
+      return;
+    } catch(e) {
+      if (e.name !== "AbortError") console.warn("Share failed:", e);
+    }
+  }
+
+  // 4. Fallback download (browser default Downloads folder)
+  const url = URL.createObjectURL(blob);
+  const a   = document.createElement("a");
+  a.href = url; a.download = outName;
+  document.body.appendChild(a); a.click(); document.body.removeChild(a);
+  setTimeout(() => URL.revokeObjectURL(url), 5000);
+  toast("✅ Guardado em Downloads/" + outName, "ok");
+}
+
+// ── Folder handle persistence (IndexedDB) ─────────────────────────────────
+async function saveFolderHandle(handle) {
+  try {
+    const db = await openDB();
+    await new Promise((res, rej) => {
+      const tx = db.transaction("certs", "readwrite");
+      tx.objectStore("certs").put(handle, "folder_handle");
+      tx.oncomplete = res; tx.onerror = e => rej(e.target.error);
+    });
+  } catch(e) { console.warn("Save folder handle failed:", e); }
+}
+
+async function getSavedFolder() {
+  try {
+    const db = await openDB();
+    const handle = await new Promise((res, rej) => {
+      const tx  = db.transaction("certs", "readonly");
+      const req = tx.objectStore("certs").get("folder_handle");
+      req.onsuccess = e => res(e.target.result);
+      req.onerror   = e => rej(e.target.error);
+    });
+    if (!handle) return null;
+    // Verify permission
+    const perm = await handle.requestPermission({ mode: "readwrite" });
+    return perm === "granted" ? handle : null;
+  } catch(e) { return null; }
+}
+
 // ── Sign ─────────────────────────────────────────────────────────────────
 async function signCurrent() {
   if (!placement || !currentFile || !pfxBuffer) return;
@@ -489,19 +601,11 @@ async function signCurrent() {
     let   ty   = pdfY + (pdfH + lines.length*lh)/2 - fs;
     for (const l of lines) { page.drawText(l,{x:txtX,y:ty,size:fs,font,color:rgb(0,0,0)}); ty-=lh; }
     const signed  = await doc.save();
-    const outName = name.replace(/\.pdf$/i,"") + "_signed_NB.pdf";
+    const outName = name.replace(/\.pdf$/i,"") + "_mobile_signed_NB.pdf";
     // Share as PDF on Android
     const blob = new Blob([signed], { type: "application/pdf" });
     const file = new File([blob], outName, { type: "application/pdf" });
-    if (navigator.share && navigator.canShare && navigator.canShare({ files: [file] })) {
-      await navigator.share({ files: [file], title: outName });
-    } else {
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href=url; a.download=outName;
-      document.body.appendChild(a); a.click(); document.body.removeChild(a);
-      setTimeout(()=>URL.revokeObjectURL(url), 5000);
-    }
+    await savePdf(blob, file, outName);
     setBadge(name, "done", "✅ Assinado");
     toast("✅ " + outName, "ok");
     document.getElementById("hintBar").textContent = "✅ Assinado com sucesso!";
@@ -526,8 +630,53 @@ function toast(msg, type="") {
   setTimeout(()=>t.className="toast",3000);
 }
 
+// ── Folder UI ────────────────────────────────────────────────────────────
+async function pickFolder() {
+  if (!window.showDirectoryPicker) {
+    toast("Use o Chrome para escolher pasta", "err"); return;
+  }
+  try {
+    const handle = await window.showDirectoryPicker({ mode: "readwrite" });
+    await saveFolderHandle(handle);
+    document.getElementById("folderName").textContent = handle.name;
+    document.getElementById("folderReady").style.display = "flex";
+    document.getElementById("folderNone").style.display  = "none";
+    toast("📂 Pasta guardada: " + handle.name, "ok");
+  } catch(e) {
+    if (e.name !== "AbortError") toast("Erro ao seleccionar pasta", "err");
+  }
+}
+
+async function clearFolder() {
+  try {
+    const db = await openDB();
+    await new Promise((res,rej) => {
+      const tx = db.transaction("certs","readwrite");
+      tx.objectStore("certs").delete("folder_handle");
+      tx.oncomplete=res; tx.onerror=e=>rej(e.target.error);
+    });
+  } catch(e) {}
+  document.getElementById("folderReady").style.display = "none";
+  document.getElementById("folderNone").style.display  = "block";
+}
+
+async function initFolder() {
+  const handle = await getSavedFolder().catch(() => null);
+  if (handle) {
+    document.getElementById("folderName").textContent = handle.name;
+    document.getElementById("folderReady").style.display = "flex";
+    document.getElementById("folderNone").style.display  = "none";
+  } else {
+    document.getElementById("folderNone").style.display  = "block";
+    document.getElementById("folderReady").style.display = "none";
+  }
+}
+
 // ── Init ──────────────────────────────────────────────────────────────────
-window.addEventListener("load", loadSavedCert);
+window.addEventListener("load", async () => {
+  await loadSavedCert();
+  await initFolder();
+});
 </script>
 </body>
 </html>
