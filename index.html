@@ -242,9 +242,8 @@ body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;backgrou
     <h2 id="previewTitle">documento_mobile_signed_NB.pdf</h2>
   </div>
   <div style="background:#1a1a1a;padding:10px 14px;text-align:center;
-              font-size:12px;color:#aaa;flex-shrink:0;">
-    Toque em <strong style="color:#d2aaf0;">Guardar PDF</strong> para escolher onde guardar
-    (OneDrive, Downloads, WhatsApp…)
+              font-size:12px;color:#aaa;flex-shrink:0;" id="saveHint">
+    Toque em <strong style="color:#d2aaf0;">Guardar PDF</strong> para guardar em Downloads
   </div>
   <div class="preview-wrap" id="previewWrap">
     <canvas id="previewCanvas" style="max-width:100%;"></canvas>
@@ -523,43 +522,98 @@ let _pdfBlob    = null;
 let _signedName = null;
 
 async function showPreview(pdfBlob, dlBlob, outName) {
-  _signedBlob = dlBlob;   // octet-stream for download
-  _pdfBlob    = pdfBlob;  // pdf for preview render
+  _signedBlob = dlBlob;
+  _pdfBlob    = pdfBlob;
   _signedName = outName;
   document.getElementById("previewTitle").textContent = outName;
 
-  // Render first page of signed PDF to canvas for preview
+  show("previewScreen");
+
+  // Render preview
   try {
-    const arr    = await pdfBlob.arrayBuffer();
-    const pdfjsDoc = await pdfjsLib.getDocument({ data: arr }).promise;
-    const page   = await pdfjsDoc.getPage(1);
-    const wrap   = document.getElementById("previewWrap");
-    const scale  = (wrap.clientWidth - 20) / page.getViewport({ scale: 1 }).width;
-    const vp     = page.getViewport({ scale });
-    const canvas = document.getElementById("previewCanvas");
-    canvas.width = vp.width; canvas.height = vp.height;
-    await page.render({ canvasContext: canvas.getContext("2d"), viewport: vp }).promise;
+    const arr      = await pdfBlob.arrayBuffer();
+    const pdfjsDoc = await pdfjsLib.getDocument({ data: new Uint8Array(arr) }).promise;
+    const page     = await pdfjsDoc.getPage(1);
+    const wrap     = document.getElementById("previewWrap");
+    const vpW      = page.getViewport({ scale: 1 }).width;
+    const scale    = Math.max(0.5, (wrap.clientWidth - 16) / vpW);
+    const vp       = page.getViewport({ scale });
+    const canvas   = document.getElementById("previewCanvas");
+    canvas.width   = vp.width;
+    canvas.height  = vp.height;
+    const ctx      = canvas.getContext("2d");
+    ctx.fillStyle  = "#ffffff";
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    await page.render({ canvasContext: ctx, viewport: vp }).promise;
   } catch(e) {
     console.warn("Preview render failed:", e);
+    // Show placeholder
+    const canvas = document.getElementById("previewCanvas");
+    const ctx    = canvas.getContext("2d");
+    canvas.width = 300; canvas.height = 200;
+    ctx.fillStyle = "#f5f3f8";
+    ctx.fillRect(0,0,300,200);
+    ctx.fillStyle = "#5a2882";
+    ctx.font = "bold 16px sans-serif";
+    ctx.textAlign = "center";
+    ctx.fillText("✅ PDF Assinado", 150, 90);
+    ctx.font = "12px sans-serif";
+    ctx.fillStyle = "#888";
+    ctx.fillText(outName, 150, 120);
   }
-
-  show("previewScreen");
 }
 
 async function downloadSigned() {
   if (!_pdfBlob || !_signedName) return;
-  // On Android Samsung Browser, Web Share API is the only reliable save method
+
+  // Convert blob to base64
+  const b64 = await new Promise(res => {
+    const r = new FileReader();
+    r.onloadend = () => res(r.result.split(",")[1]);
+    r.readAsDataURL(_pdfBlob);
+  });
+
+  // Method 1: Median.co native download bridge
+  if (window.median && median.share && median.share.downloadFile) {
+    median.share.downloadFile({
+      url: "data:application/pdf;base64," + b64,
+      filename: _signedName,
+    });
+    toast("📥 A guardar em Downloads…", "ok");
+    return;
+  }
+
+  // Method 2: Median JS bridge via postMessage
+  if (window.webkit && window.webkit.messageHandlers) {
+    window.webkit.messageHandlers.medianDownload?.postMessage({
+      url: "data:application/pdf;base64," + b64,
+      filename: _signedName,
+    });
+    toast("📥 A guardar…", "ok");
+    return;
+  }
+
+  // Method 3: Web Share API (Chrome)
   const file = new File([_pdfBlob], _signedName, { type: "application/pdf" });
   if (navigator.share && navigator.canShare && navigator.canShare({ files: [file] })) {
     try {
       await navigator.share({ files: [file], title: _signedName });
-      toast("✅ Guardado com sucesso!", "ok");
+      toast("✅ Guardado!", "ok");
+      return;
     } catch(e) {
-      if (e.name !== "AbortError") toast("❌ Erro ao guardar", "err");
+      if (e.name === "AbortError") return;
     }
-  } else {
-    toast("❌ Partilha não disponível neste browser", "err");
   }
+
+  // Method 4: data URI download (last resort)
+  const a = document.createElement("a");
+  a.href     = "data:application/pdf;base64," + b64;
+  a.download = _signedName;
+  a.style.display = "none";
+  document.body.appendChild(a);
+  a.click();
+  setTimeout(() => document.body.removeChild(a), 2000);
+  toast("📥 " + _signedName, "ok");
 }
 
 function goHome() {
