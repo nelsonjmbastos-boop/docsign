@@ -549,23 +549,46 @@ async function signCurrent() {
     const pdfW = placement.w, pdfH = placement.h;
     const sigBytes = Uint8Array.from(atob(SIG_B64), c => c.charCodeAt(0));
     const sigImg   = await doc.embedPng(sigBytes);
-    const drawH = Math.min(pdfH * 0.90, pdfH);
-    const drawW = drawH * (sigImg.width / sigImg.height);
-    page.drawImage(sigImg, { x: pdfX, y: pdfY + (pdfH-drawH)/2, width: drawW, height: drawH });
+
+    // Text lines — decide based on available height
     const font  = await doc.embedFont(StandardFonts.Helvetica);
-    const txtX  = pdfX + drawW + 2, txtW = pdfW - drawW - 4;
     const now   = new Date();
     const dStr  = now.toISOString().slice(0,10).replace(/-/g,".");
     const tStr  = now.toTimeString().slice(0,8);
     const tz    = now.toTimeString().match(/GMT([+-]\d{4})/)?.[1]||"+0000";
     const tzF   = tz.slice(0,3)+"'"+tz.slice(3)+"'";
-    const lines = pdfH < 40
-      ? ["Nelson Bastos", dStr+" "+tStr, "Motivo: "+reason, "Disp. Movel"]
-      : ["Assinado de forma","digital por Nelson","Bastos","Dados: "+dStr,tStr+" "+tzF,"Motivo: "+reason,"Disp. Movel"];
-    const fs   = Math.max(3.5, Math.min(5.5, txtW / Math.max(...lines.map(l=>l.length)) * 1.55));
-    const lh   = fs * 1.2;
-    let   ty   = pdfY + (pdfH + lines.length*lh)/2 - fs;
-    for (const l of lines) { page.drawText(l,{x:txtX,y:ty,size:fs,font,color:rgb(0,0,0)}); ty-=lh; }
+    const lines = pdfH < 35
+      ? ["Nelson Bastos", dStr+" "+tStr, "Motivo: "+reason]
+      : ["Assinado de forma","digital por Nelson","Bastos",
+         "Dados: "+dStr, tStr+" "+tzF, "Motivo: "+reason, "Disp. Movel"];
+
+    // Calculate text font size first
+    const txtW0   = pdfW * 0.52;  // text takes 52% of width
+    const maxLen  = Math.max(...lines.map(l => l.length));
+    const fsByW   = txtW0 / maxLen * 1.55;
+    const fsByH   = (pdfH - 2) / lines.length / 1.25;
+    const fs      = Math.max(3.0, Math.min(fsByW, fsByH, 7.0));
+    const lh      = fs * 1.2;
+
+    // Image takes remaining left side
+    const imgMaxW = pdfW * 0.46;
+    const imgMaxH = pdfH * 0.92;
+    let drawW = imgMaxW;
+    let drawH = drawW / (sigImg.width / sigImg.height);
+    if (drawH > imgMaxH) { drawH = imgMaxH; drawW = drawH * (sigImg.width / sigImg.height); }
+    const imgX = pdfX;
+    const imgY = pdfY + (pdfH - drawH) / 2;
+    page.drawImage(sigImg, { x: imgX, y: imgY, width: drawW, height: drawH });
+
+    // Draw text right of image
+    const txtX    = pdfX + imgMaxW + 2;
+    const txtW    = pdfW - imgMaxW - 4;
+    const totalTH = lines.length * lh;
+    let   ty      = pdfY + (pdfH + totalTH) / 2 - fs * 0.3;
+    for (const l of lines) {
+      page.drawText(l, { x: txtX, y: ty, size: fs, font, color: rgb(0,0,0) });
+      ty -= lh;
+    }
     const signed  = await doc.save();
     const outName = name.replace(/\.pdf$/i,"") + "_mobile_signed_NB.pdf";
     // Share as PDF on Android
@@ -573,10 +596,20 @@ async function signCurrent() {
     const file = new File([blob], outName, { type: "application/pdf" });
     await savePdf(blob, file, outName);
     setBadge(name, "done", "✅ Assinado");
-    toast("✅ " + outName, "ok");
-    document.getElementById("hintBar").textContent = "✅ Assinado! Toque em ‹ para o próximo ficheiro";
-    // Remove from pending list so user sees what's left
     fileMap.delete(name);
+    toast("✅ " + outName, "ok");
+    // Show next file button or go back
+    const remaining = fileMap.size;
+    if (remaining > 0) {
+      document.getElementById("hintBar").textContent =
+        "✅ Assinado! " + remaining + " ficheiro(s) por assinar → toque em ‹";
+    } else {
+      document.getElementById("hintBar").textContent = "✅ Todos os ficheiros assinados!";
+    }
+    document.getElementById("signPageBtn").disabled = true;
+    document.getElementById("sigOverlay").style.display = "none";
+    // Show back button prominently
+    setTimeout(goBack, 1500);
   } catch(err) {
     console.error(err);
     toast("❌ " + (err.message||err), "err");
