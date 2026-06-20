@@ -62,7 +62,7 @@ body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;backgrou
 .viewer-hdr h2{flex:1;font-size:15px;font-weight:600;white-space:nowrap;
   overflow:hidden;text-overflow:ellipsis;}
 .viewer-wrap{flex:1;overflow:auto;position:relative;display:flex;
-  justify-content:center;align-items:flex-start;}
+  justify-content:center;align-items:flex-start;-webkit-overflow-scrolling:touch;}
 #pdfCanvas{display:block;touch-action:none;}
 .sig-overlay{position:absolute;border:2px dashed rgba(255,255,255,.9);
   background:rgba(210,170,240,.3);cursor:move;display:none;
@@ -164,39 +164,44 @@ body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;backgrou
              autocomplete="current-password">
       <div class="mt">
         <div class="lbl">Motivo</div>
-        <input type="text" class="inp" id="reason" value="VALIDACAO">
+        <input type="text" class="inp" id="reason" value="VALIDAÇÃO">
       </div>
     </div>
 
     <!-- Pasta de destino -->
     <div class="card">
-      <div class="card-title">Pasta de Destino</div>
-      <div id="folderNone" style="display:none;">
-        <div style="background:#fff3cd;border-radius:10px;padding:10px 14px;
-                    font-size:13px;color:#856404;margin-bottom:10px;">
-          📁 Nenhuma pasta seleccionada — PDFs vão para Downloads
-        </div>
+      <div class="card-title">Guardar PDF</div>
+      <div style="display:flex;flex-direction:column;gap:8px;" id="saveMethodGroup">
+
+        <label style="display:flex;align-items:center;gap:12px;padding:12px;
+                      background:#faf8fd;border-radius:10px;cursor:pointer;
+                      border:2px solid transparent;" id="lbl_share">
+          <input type="radio" name="saveMethod" value="share" checked
+                 onchange="setSaveMethod('share')"
+                 style="width:18px;height:18px;accent-color:#5a2882;">
+          <div>
+            <div style="font-weight:600;font-size:14px;">📤 Menu de partilha</div>
+            <div style="font-size:11px;color:#888;margin-top:2px;">
+              Escolhe onde guardar cada vez (OneDrive, Downloads, WhatsApp…)
+            </div>
+          </div>
+        </label>
+
+        <label style="display:flex;align-items:center;gap:12px;padding:12px;
+                      background:#faf8fd;border-radius:10px;cursor:pointer;
+                      border:2px solid transparent;" id="lbl_download">
+          <input type="radio" name="saveMethod" value="download"
+                 onchange="setSaveMethod('download')"
+                 style="width:18px;height:18px;accent-color:#5a2882;">
+          <div>
+            <div style="font-weight:600;font-size:14px;">📥 Downloads automático</div>
+            <div style="font-size:11px;color:#888;margin-top:2px;">
+              Guarda directamente na pasta Downloads sem perguntar
+            </div>
+          </div>
+        </label>
+
       </div>
-      <div id="folderReady" style="display:none;background:#e8f8f0;border-radius:10px;
-           padding:12px 14px;display:flex;align-items:center;gap:10px;margin-bottom:10px;">
-        <span style="font-size:22px;">📂</span>
-        <div style="flex:1;">
-          <div style="font-weight:600;font-size:14px;" id="folderName">Downloads</div>
-          <div style="font-size:11px;color:#27ae60;">✅ Pasta guardada</div>
-        </div>
-        <button onclick="clearFolder()"
-                style="background:none;border:1px solid #ddd;border-radius:8px;
-                       padding:5px 10px;font-size:12px;color:#888;cursor:pointer;">
-          Mudar
-        </button>
-      </div>
-      <button onclick="pickFolder()"
-              style="width:100%;padding:12px;background:#f0e8fa;border:none;
-                     border-radius:12px;color:#5a2882;font-size:14px;
-                     font-weight:600;cursor:pointer;display:flex;
-                     align-items:center;justify-content:center;gap:8px;">
-        📁 Escolher pasta de destino
-      </button>
     </div>
 
     <!-- Assinatura visual -->
@@ -484,85 +489,46 @@ function resetPlacement() {
   document.getElementById("hintBar").textContent="👆 Toque no documento para colocar a assinatura";
 }
 
-// ── Save PDF ─────────────────────────────────────────────────────────────
+// ── Save method ───────────────────────────────────────────────────────────
+let saveMethod = "share";
+function setSaveMethod(val) {
+  saveMethod = val;
+  document.querySelectorAll("#saveMethodGroup label").forEach(l => {
+    l.style.borderColor = "transparent";
+    l.style.background  = "#faf8fd";
+  });
+  const active = document.getElementById("lbl_" + val);
+  if (active) { active.style.borderColor="#5a2882"; active.style.background="#f0e8fa"; }
+  localStorage.setItem("ds_save_method", val);
+}
+
+function initSaveMethod() {
+  const saved = localStorage.getItem("ds_save_method") || "share";
+  const radio = document.querySelector(`input[name="saveMethod"][value="${saved}"]`);
+  if (radio) { radio.checked = true; setSaveMethod(saved); }
+  else setSaveMethod("share");
+}
+
+// ── Save PDF ──────────────────────────────────────────────────────────────
 async function savePdf(blob, file, outName) {
-  // 1. Try File System Access API (choose folder — Chrome/Samsung Browser)
-  const savedFolder = await getSavedFolder();
-  if (savedFolder) {
-    try {
-      const fileHandle = await savedFolder.getFileHandle(outName, { create: true });
-      const writable   = await fileHandle.createWritable();
-      await writable.write(blob);
-      await writable.close();
-      toast("✅ Guardado em " + outName, "ok");
-      return;
-    } catch(e) {
-      console.warn("Folder write failed:", e);
+  if (saveMethod === "share") {
+    // Android share sheet — user picks destination
+    if (navigator.share && navigator.canShare && navigator.canShare({ files: [file] })) {
+      try {
+        await navigator.share({ files: [file], title: outName });
+        return;
+      } catch(e) {
+        if (e.name === "AbortError") return; // user cancelled
+      }
     }
   }
-
-  // 2. Try to pick folder and save
-  if (window.showDirectoryPicker) {
-    try {
-      const dirHandle  = await window.showDirectoryPicker({ mode: "readwrite" });
-      // Save folder handle for next time
-      await saveFolderHandle(dirHandle);
-      const fileHandle = await dirHandle.getFileHandle(outName, { create: true });
-      const writable   = await fileHandle.createWritable();
-      await writable.write(blob);
-      await writable.close();
-      toast("✅ Guardado em " + outName, "ok");
-      return;
-    } catch(e) {
-      if (e.name !== "AbortError") console.warn("Directory picker failed:", e);
-    }
-  }
-
-  // 3. Android share sheet (opens with PDF viewer / save to Downloads)
-  if (navigator.share && navigator.canShare && navigator.canShare({ files: [file] })) {
-    try {
-      await navigator.share({ files: [file], title: outName });
-      return;
-    } catch(e) {
-      if (e.name !== "AbortError") console.warn("Share failed:", e);
-    }
-  }
-
-  // 4. Fallback download (browser default Downloads folder)
+  // Download to Downloads folder
   const url = URL.createObjectURL(blob);
   const a   = document.createElement("a");
   a.href = url; a.download = outName;
   document.body.appendChild(a); a.click(); document.body.removeChild(a);
   setTimeout(() => URL.revokeObjectURL(url), 5000);
-  toast("✅ Guardado em Downloads/" + outName, "ok");
-}
-
-// ── Folder handle persistence (IndexedDB) ─────────────────────────────────
-async function saveFolderHandle(handle) {
-  try {
-    const db = await openDB();
-    await new Promise((res, rej) => {
-      const tx = db.transaction("certs", "readwrite");
-      tx.objectStore("certs").put(handle, "folder_handle");
-      tx.oncomplete = res; tx.onerror = e => rej(e.target.error);
-    });
-  } catch(e) { console.warn("Save folder handle failed:", e); }
-}
-
-async function getSavedFolder() {
-  try {
-    const db = await openDB();
-    const handle = await new Promise((res, rej) => {
-      const tx  = db.transaction("certs", "readonly");
-      const req = tx.objectStore("certs").get("folder_handle");
-      req.onsuccess = e => res(e.target.result);
-      req.onerror   = e => rej(e.target.error);
-    });
-    if (!handle) return null;
-    // Verify permission
-    const perm = await handle.requestPermission({ mode: "readwrite" });
-    return perm === "granted" ? handle : null;
-  } catch(e) { return null; }
+  toast("✅ Downloads/" + outName, "ok");
 }
 
 // ── Sign ─────────────────────────────────────────────────────────────────
@@ -608,8 +574,9 @@ async function signCurrent() {
     await savePdf(blob, file, outName);
     setBadge(name, "done", "✅ Assinado");
     toast("✅ " + outName, "ok");
-    document.getElementById("hintBar").textContent = "✅ Assinado com sucesso!";
-    setTimeout(goBack, 1800);
+    document.getElementById("hintBar").textContent = "✅ Assinado! Toque em ‹ para o próximo ficheiro";
+    // Remove from pending list so user sees what's left
+    fileMap.delete(name);
   } catch(err) {
     console.error(err);
     toast("❌ " + (err.message||err), "err");
@@ -621,61 +588,35 @@ async function signCurrent() {
 // ── Utils ─────────────────────────────────────────────────────────────────
 function show(id) {
   document.querySelectorAll(".screen").forEach(s=>s.classList.remove("active"));
-  document.getElementById(id).classList.add("active");
+  const el = document.getElementById(id);
+  el.classList.add("active");
+  // Scroll to top of scroll area
+  const scroll = el.querySelector(".scroll");
+  if (scroll) scroll.scrollTop = 0;
 }
-function goBack() { show("setupScreen"); }
+function goBack() {
+  renderList(); // refresh file list
+  show("setupScreen");
+  // Scroll to file list
+  setTimeout(() => {
+    const fl = document.getElementById("fileList");
+    if (fl && fl.children.length > 0) {
+      fl.scrollIntoView({ behavior: "smooth", block: "start" });
+    }
+  }, 100);
+}
 function toast(msg, type="") {
   const t=document.getElementById("toast");
   t.textContent=msg; t.className="toast show "+(type||"");
   setTimeout(()=>t.className="toast",3000);
 }
 
-// ── Folder UI ────────────────────────────────────────────────────────────
-async function pickFolder() {
-  if (!window.showDirectoryPicker) {
-    toast("Use o Chrome para escolher pasta", "err"); return;
-  }
-  try {
-    const handle = await window.showDirectoryPicker({ mode: "readwrite" });
-    await saveFolderHandle(handle);
-    document.getElementById("folderName").textContent = handle.name;
-    document.getElementById("folderReady").style.display = "flex";
-    document.getElementById("folderNone").style.display  = "none";
-    toast("📂 Pasta guardada: " + handle.name, "ok");
-  } catch(e) {
-    if (e.name !== "AbortError") toast("Erro ao seleccionar pasta", "err");
-  }
-}
 
-async function clearFolder() {
-  try {
-    const db = await openDB();
-    await new Promise((res,rej) => {
-      const tx = db.transaction("certs","readwrite");
-      tx.objectStore("certs").delete("folder_handle");
-      tx.oncomplete=res; tx.onerror=e=>rej(e.target.error);
-    });
-  } catch(e) {}
-  document.getElementById("folderReady").style.display = "none";
-  document.getElementById("folderNone").style.display  = "block";
-}
-
-async function initFolder() {
-  const handle = await getSavedFolder().catch(() => null);
-  if (handle) {
-    document.getElementById("folderName").textContent = handle.name;
-    document.getElementById("folderReady").style.display = "flex";
-    document.getElementById("folderNone").style.display  = "none";
-  } else {
-    document.getElementById("folderNone").style.display  = "block";
-    document.getElementById("folderReady").style.display = "none";
-  }
-}
 
 // ── Init ──────────────────────────────────────────────────────────────────
 window.addEventListener("load", async () => {
   await loadSavedCert();
-  await initFolder();
+  initSaveMethod();
 });
 </script>
 </body>
