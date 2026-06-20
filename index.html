@@ -252,7 +252,7 @@ body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;backgrou
   <div class="preview-footer">
     <button class="pfooter-btn" onclick="downloadSigned()"
             style="background:var(--p);color:#fff;">
-      📥 Descarregar PDF
+      📤 Guardar / Partilhar
     </button>
     <button class="pfooter-btn" onclick="goHome()"
             style="background:var(--lav);color:var(--pd);">
@@ -546,15 +546,39 @@ async function showPreview(blob, outName) {
 
 function downloadSigned() {
   if (!_signedBlob || !_signedName) return;
-  const url = URL.createObjectURL(_signedBlob);
-  const a   = document.createElement("a");
-  a.href     = url;
-  a.download = _signedName;
-  a.style.display = "none";
-  document.body.appendChild(a);
-  a.click();
-  setTimeout(() => { document.body.removeChild(a); URL.revokeObjectURL(url); }, 2000);
-  toast("📥 A descarregar " + _signedName, "ok");
+
+  // Method 1: Share API (most reliable on Android — saves to any app)
+  if (navigator.share && navigator.canShare) {
+    const file = new File([_signedBlob], _signedName, { type: "application/pdf" });
+    if (navigator.canShare({ files: [file] })) {
+      navigator.share({
+        files: [file],
+        title: _signedName,
+        text: "DocSign — Tecnovia Angola"
+      }).then(() => toast("✅ Partilhado!", "ok"))
+        .catch(e => { if (e.name !== "AbortError") fallbackDownload(); });
+      return;
+    }
+  }
+  fallbackDownload();
+}
+
+function fallbackDownload() {
+  if (!_signedBlob || !_signedName) return;
+  // Convert to base64 data URL — forces download on Android browsers
+  const reader = new FileReader();
+  reader.onloadend = () => {
+    const a       = document.createElement("a");
+    a.href        = reader.result;
+    a.download    = _signedName;
+    a.type        = "application/octet-stream";
+    a.style.display = "none";
+    document.body.appendChild(a);
+    a.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true, view: window }));
+    setTimeout(() => document.body.removeChild(a), 2000);
+    toast("📥 " + _signedName, "ok");
+  };
+  reader.readAsDataURL(_signedBlob);
 }
 
 function goHome() {
