@@ -61,12 +61,13 @@ body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;backgrou
   display:flex;align-items:center;gap:10px;flex-shrink:0;box-shadow:0 2px 8px rgba(0,0,0,.4);}
 .viewer-hdr h2{flex:1;font-size:15px;font-weight:600;white-space:nowrap;
   overflow:hidden;text-overflow:ellipsis;}
-.viewer-wrap{flex:1;overflow:auto;position:relative;display:flex;
-  justify-content:center;align-items:flex-start;-webkit-overflow-scrolling:touch;}
-#pdfCanvas{display:block;touch-action:none;}
+.viewer-wrap{flex:1;overflow:scroll;position:relative;display:flex;
+  justify-content:flex-start;align-items:flex-start;-webkit-overflow-scrolling:touch;
+  touch-action:pan-x pan-y;}
+#pdfCanvas{display:block;touch-action:pan-x pan-y;}
 .sig-overlay{position:absolute;border:2px dashed rgba(255,255,255,.9);
   background:rgba(210,170,240,.3);cursor:move;display:none;
-  user-select:none;touch-action:none;}
+  user-select:none;touch-action:none;z-index:10;}
 .sig-overlay img{position:absolute;inset:2px;width:calc(100% - 4px);
   height:calc(100% - 4px);object-fit:contain;object-position:left center;
   opacity:.9;pointer-events:none;}
@@ -417,7 +418,23 @@ function nextPage() { if (currentPage < totalPages) renderPage(currentPage + 1);
 // ── Place signature ───────────────────────────────────────────────────────
 const canvas = document.getElementById("pdfCanvas");
 canvas.addEventListener("click", placeAt);
-canvas.addEventListener("touchend", e => { e.preventDefault(); placeAt(e.changedTouches[0]); }, { passive: false });
+canvas.addEventListener("touchend", e => {
+  // Only place signature if touch was short (tap, not scroll)
+  if (e.changedTouches[0]._wasScroll) return;
+  placeAt(e.changedTouches[0]);
+}, { passive: true });
+
+let _touchStartY = 0, _touchStartTime = 0;
+canvas.addEventListener("touchstart", e => {
+  _touchStartY = e.touches[0].clientY;
+  _touchStartTime = Date.now();
+}, { passive: true });
+canvas.addEventListener("touchmove", e => {
+  // Mark as scroll if moved more than 10px
+  if (Math.abs(e.touches[0].clientY - _touchStartY) > 10) {
+    if (e.changedTouches) e.changedTouches[0]._wasScroll = true;
+  }
+}, { passive: true });
 
 function placeAt(e) {
   const rect = canvas.getBoundingClientRect();
@@ -469,6 +486,10 @@ function setupDrag(ov) {
   handle.addEventListener("mousedown", e => start(e,true));
   ov.addEventListener("touchstart", e => start(e,false), {passive:false});
   handle.addEventListener("touchstart", e => start(e,true), {passive:false});
+
+  // Store refs so we can remove them when leaving viewer
+  window._dragMove = move;
+  window._dragEnd  = end;
   document.addEventListener("mousemove", move);
   document.addEventListener("touchmove", move, {passive:false});
   document.addEventListener("mouseup",  end);
@@ -512,23 +533,33 @@ function initSaveMethod() {
 // ── Save PDF ──────────────────────────────────────────────────────────────
 async function savePdf(blob, file, outName) {
   if (saveMethod === "share") {
-    // Android share sheet — user picks destination
     if (navigator.share && navigator.canShare && navigator.canShare({ files: [file] })) {
       try {
         await navigator.share({ files: [file], title: outName });
         return;
       } catch(e) {
-        if (e.name === "AbortError") return; // user cancelled
+        if (e.name === "AbortError") return;
+        // Fall through to download
       }
     }
   }
-  // Download to Downloads folder
-  const url = URL.createObjectURL(blob);
-  const a   = document.createElement("a");
-  a.href = url; a.download = outName;
-  document.body.appendChild(a); a.click(); document.body.removeChild(a);
-  setTimeout(() => URL.revokeObjectURL(url), 5000);
-  toast("✅ Downloads/" + outName, "ok");
+  // Force download with correct filename to Downloads/
+  // Use data URL to bypass browser filename restrictions on Android
+  const reader = new FileReader();
+  reader.onload = function() {
+    const a = document.createElement("a");
+    a.href     = reader.result;
+    a.download = outName;
+    a.style.display = "none";
+    document.body.appendChild(a);
+    a.click();
+    setTimeout(() => {
+      document.body.removeChild(a);
+      URL.revokeObjectURL(a.href);
+    }, 1000);
+  };
+  reader.readAsDataURL(blob);
+  toast("✅ A guardar: " + outName, "ok");
 }
 
 // ── Sign ─────────────────────────────────────────────────────────────────
@@ -628,15 +659,24 @@ function show(id) {
   if (scroll) scroll.scrollTop = 0;
 }
 function goBack() {
-  renderList(); // refresh file list
+  // Remove drag listeners to restore scroll on setup screen
+  if (window._dragMove) {
+    document.removeEventListener("mousemove", window._dragMove);
+    document.removeEventListener("touchmove", window._dragMove);
+    window._dragMove = null;
+  }
+  if (window._dragEnd) {
+    document.removeEventListener("mouseup",  window._dragEnd);
+    document.removeEventListener("touchend", window._dragEnd);
+    window._dragEnd = null;
+  }
+  renderList();
   show("setupScreen");
-  // Scroll to file list
+  // Scroll setup screen to top
   setTimeout(() => {
-    const fl = document.getElementById("fileList");
-    if (fl && fl.children.length > 0) {
-      fl.scrollIntoView({ behavior: "smooth", block: "start" });
-    }
-  }, 100);
+    const scroll = document.querySelector("#setupScreen .scroll");
+    if (scroll) scroll.scrollTop = 0;
+  }, 50);
 }
 function toast(msg, type="") {
   const t=document.getElementById("toast");
