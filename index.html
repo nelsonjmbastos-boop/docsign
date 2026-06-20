@@ -98,6 +98,19 @@ body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;backgrou
 .toast.err{background:var(--err);}
 .spacer{height:28px;}
 #viewerScreen{background:#222;}
+/* Preview screen */
+#previewScreen{background:#111;}
+.preview-hdr{background:var(--pd);color:#fff;padding:12px 14px;
+  display:flex;align-items:center;gap:10px;flex-shrink:0;}
+.preview-hdr h2{flex:1;font-size:15px;font-weight:600;
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.preview-wrap{flex:1;overflow:auto;display:flex;
+  justify-content:center;align-items:flex-start;padding:8px;
+  -webkit-overflow-scrolling:touch;}
+.preview-wrap img{max-width:100%;border:1px solid #444;border-radius:4px;}
+.preview-footer{background:var(--pd);padding:10px 14px;display:flex;gap:8px;flex-shrink:0;}
+.pfooter-btn{flex:1;padding:14px;border:none;border-radius:10px;
+  font-size:15px;font-weight:700;cursor:pointer;}
 </style>
 </head>
 <body>
@@ -169,41 +182,7 @@ body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;backgrou
       </div>
     </div>
 
-    <!-- Pasta de destino -->
-    <div class="card">
-      <div class="card-title">Guardar PDF</div>
-      <div style="display:flex;flex-direction:column;gap:8px;" id="saveMethodGroup">
 
-        <label style="display:flex;align-items:center;gap:12px;padding:12px;
-                      background:#faf8fd;border-radius:10px;cursor:pointer;
-                      border:2px solid transparent;" id="lbl_share">
-          <input type="radio" name="saveMethod" value="share" checked
-                 onchange="setSaveMethod('share')"
-                 style="width:18px;height:18px;accent-color:#5a2882;">
-          <div>
-            <div style="font-weight:600;font-size:14px;">📤 Menu de partilha</div>
-            <div style="font-size:11px;color:#888;margin-top:2px;">
-              Escolhe onde guardar cada vez (OneDrive, Downloads, WhatsApp…)
-            </div>
-          </div>
-        </label>
-
-        <label style="display:flex;align-items:center;gap:12px;padding:12px;
-                      background:#faf8fd;border-radius:10px;cursor:pointer;
-                      border:2px solid transparent;" id="lbl_download">
-          <input type="radio" name="saveMethod" value="download"
-                 onchange="setSaveMethod('download')"
-                 style="width:18px;height:18px;accent-color:#5a2882;">
-          <div>
-            <div style="font-weight:600;font-size:14px;">📥 Downloads automático</div>
-            <div style="font-size:11px;color:#888;margin-top:2px;">
-              Guarda directamente na pasta Downloads sem perguntar
-            </div>
-          </div>
-        </label>
-
-      </div>
-    </div>
 
     <!-- Assinatura visual -->
     <div class="card">
@@ -255,6 +234,32 @@ body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;backgrou
 </div>
 
 <div class="toast" id="toast"></div>
+
+<!-- SCREEN 3 — Preview -->
+<div class="screen" id="previewScreen">
+  <div class="preview-hdr">
+    <span style="font-size:22px;">✅</span>
+    <h2 id="previewTitle">documento_mobile_signed_NB.pdf</h2>
+  </div>
+  <div style="background:#1a1a1a;padding:10px 14px;text-align:center;
+              font-size:12px;color:#aaa;flex-shrink:0;">
+    👆 Toque na imagem para descarregar o PDF
+  </div>
+  <div class="preview-wrap" id="previewWrap">
+    <canvas id="previewCanvas" style="max-width:100%;cursor:pointer;"
+            onclick="downloadSigned()"></canvas>
+  </div>
+  <div class="preview-footer">
+    <button class="pfooter-btn" onclick="downloadSigned()"
+            style="background:var(--p);color:#fff;">
+      📥 Descarregar PDF
+    </button>
+    <button class="pfooter-btn" onclick="goHome()"
+            style="background:var(--lav);color:var(--pd);">
+      ✍️ Próximo
+    </button>
+  </div>
+</div>
 
 <script>
 pdfjsLib.GlobalWorkerOptions.workerSrc =
@@ -510,56 +515,52 @@ function resetPlacement() {
   document.getElementById("hintBar").textContent="👆 Toque no documento para colocar a assinatura";
 }
 
-// ── Save method ───────────────────────────────────────────────────────────
-let saveMethod = "share";
-function setSaveMethod(val) {
-  saveMethod = val;
-  document.querySelectorAll("#saveMethodGroup label").forEach(l => {
-    l.style.borderColor = "transparent";
-    l.style.background  = "#faf8fd";
-  });
-  const active = document.getElementById("lbl_" + val);
-  if (active) { active.style.borderColor="#5a2882"; active.style.background="#f0e8fa"; }
-  localStorage.setItem("ds_save_method", val);
-}
 
-function initSaveMethod() {
-  const saved = localStorage.getItem("ds_save_method") || "share";
-  const radio = document.querySelector(`input[name="saveMethod"][value="${saved}"]`);
-  if (radio) { radio.checked = true; setSaveMethod(saved); }
-  else setSaveMethod("share");
-}
 
-// ── Save PDF ──────────────────────────────────────────────────────────────
-async function savePdf(blob, file, outName) {
-  if (saveMethod === "share") {
-    if (navigator.share && navigator.canShare && navigator.canShare({ files: [file] })) {
-      try {
-        await navigator.share({ files: [file], title: outName });
-        return;
-      } catch(e) {
-        if (e.name === "AbortError") return;
-        // Fall through to download
-      }
-    }
+// ── Preview & Download ────────────────────────────────────────────────────
+let _signedBlob = null;
+let _signedName = null;
+
+async function showPreview(blob, outName) {
+  _signedBlob = blob;
+  _signedName = outName;
+  document.getElementById("previewTitle").textContent = outName;
+
+  // Render first page of signed PDF to canvas for preview
+  try {
+    const arr    = await blob.arrayBuffer();
+    const pdfjsDoc = await pdfjsLib.getDocument({ data: arr }).promise;
+    const page   = await pdfjsDoc.getPage(1);
+    const wrap   = document.getElementById("previewWrap");
+    const scale  = (wrap.clientWidth - 20) / page.getViewport({ scale: 1 }).width;
+    const vp     = page.getViewport({ scale });
+    const canvas = document.getElementById("previewCanvas");
+    canvas.width = vp.width; canvas.height = vp.height;
+    await page.render({ canvasContext: canvas.getContext("2d"), viewport: vp }).promise;
+  } catch(e) {
+    console.warn("Preview render failed:", e);
   }
-  // Force download with correct filename to Downloads/
-  // Use data URL to bypass browser filename restrictions on Android
-  const reader = new FileReader();
-  reader.onload = function() {
-    const a = document.createElement("a");
-    a.href     = reader.result;
-    a.download = outName;
-    a.style.display = "none";
-    document.body.appendChild(a);
-    a.click();
-    setTimeout(() => {
-      document.body.removeChild(a);
-      URL.revokeObjectURL(a.href);
-    }, 1000);
-  };
-  reader.readAsDataURL(blob);
-  toast("✅ A guardar: " + outName, "ok");
+
+  show("previewScreen");
+}
+
+function downloadSigned() {
+  if (!_signedBlob || !_signedName) return;
+  const url = URL.createObjectURL(_signedBlob);
+  const a   = document.createElement("a");
+  a.href     = url;
+  a.download = _signedName;
+  a.style.display = "none";
+  document.body.appendChild(a);
+  a.click();
+  setTimeout(() => { document.body.removeChild(a); URL.revokeObjectURL(url); }, 2000);
+  toast("📥 A descarregar " + _signedName, "ok");
+}
+
+function goHome() {
+  _signedBlob = null;
+  _signedName = null;
+  goBack();
 }
 
 // ── Sign ─────────────────────────────────────────────────────────────────
@@ -624,23 +625,10 @@ async function signCurrent() {
     const outName = name.replace(/\.pdf$/i,"") + "_mobile_signed_NB.pdf";
     // Share as PDF on Android
     const blob = new Blob([signed], { type: "application/pdf" });
-    const file = new File([blob], outName, { type: "application/pdf" });
-    await savePdf(blob, file, outName);
     setBadge(name, "done", "✅ Assinado");
     fileMap.delete(name);
-    toast("✅ " + outName, "ok");
-    // Show next file button or go back
-    const remaining = fileMap.size;
-    if (remaining > 0) {
-      document.getElementById("hintBar").textContent =
-        "✅ Assinado! " + remaining + " ficheiro(s) por assinar → toque em ‹";
-    } else {
-      document.getElementById("hintBar").textContent = "✅ Todos os ficheiros assinados!";
-    }
-    document.getElementById("signPageBtn").disabled = true;
-    document.getElementById("sigOverlay").style.display = "none";
-    // Show back button prominently
-    setTimeout(goBack, 1500);
+    // Show preview screen
+    await showPreview(blob, outName);
   } catch(err) {
     console.error(err);
     toast("❌ " + (err.message||err), "err");
@@ -689,7 +677,6 @@ function toast(msg, type="") {
 // ── Init ──────────────────────────────────────────────────────────────────
 window.addEventListener("load", async () => {
   await loadSavedCert();
-  initSaveMethod();
 });
 </script>
 </body>
